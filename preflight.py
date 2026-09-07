@@ -42,12 +42,17 @@ def check_bf16() -> None:
         print("  [!] No GPU visible: training is not feasible here.")
         return
     name = torch.cuda.get_device_name(0)
-    ok = torch.cuda.is_bf16_supported()
-    print(f"  GPU: {name}")
-    if ok:
-        print("  bf16 supported -> mixed_precision='bf16' is fine.")
+    major, minor = torch.cuda.get_device_capability(0)
+    total_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+    # Native bf16 requires Ampere (compute capability 8.0) or newer.
+    # Do NOT rely on torch.cuda.is_bf16_supported(): recent PyTorch versions
+    # return True on Turing too, counting slow software emulation.
+    native_bf16 = major >= 8
+    print(f"  GPU: {name} (compute capability {major}.{minor}, {total_gb:.0f} GB)")
+    if native_bf16:
+        print("  Native bf16 -> mixed_precision='bf16' is fine.")
     else:
-        print("  [!] bf16 NOT supported (typical of T4/P100 on free Colab).")
+        print("  [!] NO native bf16 (pre-Ampere: T4, P100, V100).")
         print("      In training.py: Accelerator(mixed_precision='fp16').")
         print("      Beware that with fp16 the DPO loss can go NaN:")
         print("      if that happens, you need float32 logprobs or an L4/A100 GPU.")
