@@ -1,8 +1,10 @@
 """
-Preflight for Week 1 - small-scale reproduction of AntiDote.
+Preflight (controlli "prima del volo") per la Week 1 -- riproduzione in piccola scala
+di AntiDote.
 
-Run this BEFORE modifying training.py. It trains nothing: it checks that the
-three things that can make a run fail silently are in order.
+Lancia questo script PRIMA di modificare training.py. Non allena nulla: controlla che
+le tre cose che possono far fallire un run "in silenzio" (cioè senza errori, ma
+producendo un risultato inutile o sbagliato) siano a posto.
 
     python preflight.py --model_name Qwen/Qwen2.5-0.5B-Instruct \
                         --n_harmful 1000 --batch_size 2 --k_steps 2000
@@ -15,17 +17,28 @@ from transformers import AutoConfig
 
 def derive_layer_configs(model_name: str) -> dict:
     """
-    Returns the {module_name: (in_features, out_features)} dict that
-    Adversary(...) expects, deriving it from the model config instead of
-    hardcoding it. Replaces layer_configs_3b in training.py.
+    Ritorna il dizionario {nome_modulo: (in_features, out_features)} che si aspetta
+    `Adversary(...)` (vedi adversary.py), derivandolo direttamente dalla configurazione
+    del modello invece di scriverlo a mano per una taglia di modello fissa. Sostituisce
+    (ed evita) il vecchio `layer_configs_3b` hardcoded in training.py, che sarebbe
+    sbagliato per qualsiasi modello diverso da quello per cui era stato scritto a mano.
 
-    Watch out for k_proj/v_proj: with Grouped-Query Attention the output is
-    NOT hidden_size but num_key_value_heads * head_dim.
+    Attenzione a k_proj/v_proj: con la Grouped-Query Attention (GQA) l'output di questi
+    due layer NON ha dimensione `hidden_size` come q_proj/o_proj, ma
+    `num_key_value_heads * head_dim` (che può essere più piccola: è proprio l'idea della
+    GQA, condividere key/value tra più teste di query per risparmiare memoria).
     """
+    # Scarica (o legge dalla cache locale) solo il file di configurazione del modello,
+    # senza caricarne i pesi: è molto più rapido che caricare l'intero modello solo per
+    # leggere due numeri.
     cfg = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
     hidden = cfg.hidden_size
     n_heads = cfg.num_attention_heads
+    # Se il modello non usa Grouped-Query Attention, `num_key_value_heads` non esiste:
+    # in quel caso il numero di teste key/value è uguale al numero di teste query.
     n_kv = getattr(cfg, "num_key_value_heads", n_heads)
+    # Alcuni modelli espongono `head_dim` esplicitamente; altrimenti si calcola dividendo
+    # la dimensione nascosta per il numero di teste query.
     head_dim = getattr(cfg, "head_dim", hidden // n_heads)
     kv_out = n_kv * head_dim
 
@@ -38,15 +51,23 @@ def derive_layer_configs(model_name: str) -> dict:
 
 
 def check_bf16() -> None:
+    """
+    Controlla se la GPU disponibile (se c'è) supporta bf16 in modo NATIVO in hardware.
+    bf16 (bfloat16) è un formato numerico a 16 bit usato per allenare più velocemente e
+    con meno memoria rispetto a float32, mantenendo però lo stesso intervallo di valori
+    rappresentabili di float32 (a differenza di float16, che ha un intervallo più
+    piccolo e può più facilmente "esplodere" o andare a zero).
+    """
     if not torch.cuda.is_available():
         print("  [!] No GPU visible: training is not feasible here.")
         return
     name = torch.cuda.get_device_name(0)
     major, minor = torch.cuda.get_device_capability(0)
     total_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
-    # Native bf16 requires Ampere (compute capability 8.0) or newer.
-    # Do NOT rely on torch.cuda.is_bf16_supported(): recent PyTorch versions
-    # return True on Turing too, counting slow software emulation.
+    # bf16 nativo richiede una GPU Ampere (compute capability 8.0) o più recente.
+    # NON fidarsi di `torch.cuda.is_bf16_supported()`: versioni recenti di PyTorch
+    # ritornano True anche su GPU Turing (es. T4), che però lo emulano via software in
+    # modo lento -- non è vero supporto nativo.
     native_bf16 = major >= 8
     print(f"  GPU: {name} (compute capability {major}.{minor}, {total_gb:.0f} GB)")
     if native_bf16:
@@ -59,6 +80,18 @@ def check_bf16() -> None:
 
 
 def check_blocks(n_harmful: int, batch_size: int, k_steps: int, epochs: int = 3) -> None:
+    """
+    Controlla che il "programma a blocchi" del loop bi-livello (Fase 1 adversary + Fase 2
+    defender, ripetute a blocchi) abbia effettivamente almeno un blocco da eseguire.
+
+    Il loop bi-livello calcola `num_blocks = numero_di_batch // k_steps`. Se il dataset
+    è troppo piccolo rispetto a k_steps, `num_blocks` diventa 0: in quel caso il ciclo
+    `for block_idx in range(num_blocks)` non farebbe NESSUNA iterazione, e lo script
+    arriverebbe comunque, senza nessun errore, fino al merge finale -- restituendo il
+    modello di partenza, non modificato, come se fosse "hardened". È un fallimento
+    silenzioso particolarmente insidioso perché non si vede nessun errore: si vede solo,
+    dopo, che il modello non è cambiato per niente.
+    """
     n_batches = n_harmful // batch_size
     num_blocks = n_batches // k_steps
     print(f"  examples={n_harmful}  batch_size={batch_size}  -> {n_batches} batches")
@@ -69,6 +102,8 @@ def check_blocks(n_harmful: int, batch_size: int, k_steps: int, epochs: int = 3)
         print("       script reaches the merge without errors, returning an")
         print(f"       un-hardened model. Lower k_steps to ~{suggested}.")
     else:
+        # Ogni blocco fa k_steps step di adversary E k_steps step di defender (per
+        # questo il fattore "2" qui sotto): il totale è quindi epoche * blocchi * 2 * k_steps.
         total = epochs * num_blocks * 2 * k_steps
         print(f"  total optimization steps: {epochs} x {num_blocks} x 2 x {k_steps}"
               f" = {total:,}")
