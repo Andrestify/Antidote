@@ -456,13 +456,16 @@ Try these before reading the answers below — they're designed to test whether 
 
 ## 10. Where to go from here
 
-If you want to keep building from this foundation, the natural next steps within the paper are:
+Equation 2 is the idealized, uncomputable specification — the rest of the paper exists to approximate it. If you want to keep building from this foundation, the natural next steps within this tutorial series are:
 
-1. **Equation 3** — how the intractable, abstract adversary $A$ gets replaced by a concrete, trainable, differentiable neural network $H_\phi$ (the adversarial hypernetwork) that reads the target model's internal activations and outputs low-rank (LoRA) weight perturbations $(U, V)$ designed to maximize $L_{\text{harm}}$:
+- [`equation1_tutorial.md`](equation1_tutorial.md) — if you haven't already, this is the equation Equation 2 is built on top of: the adversary's own objective, $\max_{A\in\mathcal{A}}$, in isolation, before it gets wrapped inside the outer minimization over $\theta$.
+- [`equation3_tutorial.md`](equation3_tutorial.md) — how the intractable, abstract adversary $A$ gets replaced by a concrete, trainable, differentiable neural network $H_\phi$ (the adversarial hypernetwork) that reads the target model's internal activations and outputs low-rank (LoRA) weight perturbations $(U, V)$ designed to maximize $L_{\text{harm}}$:
    $$
    (U_l, V_l) = H_\phi\big(X_l(x;\theta)\big)
    $$
-2. **Equations 4–5 and the bi-level training loop** — how the defender's weights $\theta_D$ and the hypernetwork's weights $\phi$ are trained in an alternating, interleaved $k:k$ schedule, each chasing its own half of the min-max game from Equation 2, with the capability loss computed separately on the *clean* (unattacked) model to preserve "gradient purity," as the paper describes it.
-3. **The empirical evaluation** — the 52-attack red-teaming gauntlet used to approximate, empirically, "how close does this trained model get to the theoretical worst-case robustness guarantee that Equation 2 idealizes?" — since, as we established, Equation 2 itself can't be solved exactly, only approximated and then stress-tested.
+- [`equation4_tutorial.md`](equation4_tutorial.md) — how the hypernetwork's own weights $\phi$ are trained, via a DPO-style loss, to make that generated patch an actually effective attack — the "Adversary's Turn" half of the bi-level training loop.
+- [`equation5_tutorial.md`](equation5_tutorial.md) — how the defender's weights $\theta_D$ are trained, in the alternating "Defender's Turn," to resist that freshly-strengthened attack — the concrete, tractable stand-in for Equation 2's outer minimization.
+- [`equation6_tutorial.md`](equation6_tutorial.md) — how that same defender's training simultaneously avoids catastrophic forgetting, with the capability loss computed separately on the *clean* (unattacked) model to preserve "gradient purity," as the paper describes it.
+- **The empirical evaluation** — the 52-attack red-teaming gauntlet used to approximate, empirically, "how close does this trained model get to the theoretical worst-case robustness guarantee that Equation 2 idealizes?" — since, as we established, Equation 2 itself can't be solved exactly, only approximated and then stress-tested.
 
 Understanding Equation 2 deeply, as we've now done, is what makes all of these later pieces click into place: every subsequent equation and training trick in the paper exists purely in service of approximating this one, uncomputable, ideal specification of what a truly tamper-resistant language model would be.
